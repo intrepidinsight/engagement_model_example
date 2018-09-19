@@ -12,10 +12,7 @@ library('nlme')
 library('simstudy')
 library('portes')
 library('gridExtra')
-library('kableExtra')
 setwd("C:/Users/jakek/Documents/intrepidinsight/blog") 
-knitr::opts_chunk$set(echo = TRUE)
-
 
 ## prep google trends data
 g_trend_hcare<-data.table(read.csv("blog_maximize/homelessness_gtrends.csv", stringsAsFactors = FALSE))
@@ -96,9 +93,6 @@ for (x in 1:5){
 colnames(aic_bic_res)<-c("Variables", "AIC","BIC","AICc", "RMSE")
 setkey(aic_bic_res, BIC, AICc, Variables)
 
-kable(aic_bic_res[min(aic_bic_res$AICc)==AICc | min(aic_bic_res$BIC)==BIC]) %>%
-  kable_styling(bootstrap_options = "striped", full_width = F)
-
 aic_bic_res<-NULL
 together<-together[,blog_tweets:=blog*tweets][,blog_instagram:=instagram*blog][, blog_email:=blog*email][, tweets_instagram:=tweets*instagram][,tweets_email:=tweets*email][, instagram_email:=instagram*email]
 for (x in 0:6){
@@ -111,9 +105,6 @@ for (x in 0:6){
 
 colnames(aic_bic_res)<-c("Variables", "AIC","BIC","AICc", "RMSE")
 setkey(aic_bic_res, BIC, AIC, Variables)
-
-kable(aic_bic_res[min(aic_bic_res$AICc)==AICc | min(aic_bic_res$BIC)==BIC]) %>%
-  kable_styling(bootstrap_options = "striped", full_width = F)
 
 setkey(together, week_start)
 ##together$residuals<-reg_arma$residuals
@@ -142,11 +133,6 @@ for (x in 0:4){
 
 colnames(aic_bic_res)<-c("Variables", "AIC","BIC", "AICc", "RMSE")
 setkey(aic_bic_res, BIC,AICc, Variables)
-
-
-
-kable(aic_bic_res[min(aic_bic_res$AICc)==AICc | min(aic_bic_res$BIC)==BIC]) %>%
-  kable_styling(bootstrap_options = "striped", full_width = F)
 
 reg_normal<-Arima(together[,"search_index"], order=c(0,0,1), xreg=together[,c("email", "root_tweet", "instagram", "blog", "blog_instagram", "tweets_instagram")])
 summary(reg_normal)
@@ -190,6 +176,8 @@ ggplot() +
   ggtitle("Final Engagement Model with MA(1) Errors: Fitted vs Actual")
 
 ########### ALL OF THIS SECTION IS MAXIMIZATION - FINDING THE VALUES OF THE OUTREACH CHANNELS THAT MAXIMIZE ENGAGEMENT (SUBJECT TO BUDGET CONSTRAINT)
+save.image("blog_maximize/workspace_pre_maxization.RData")
+
 ad_rates<-coef(fit_nls)[seq(3,9, by=2)]
 exo_values<-together_mod[nrow(together_mod),c("email", "tweets", "instagram", "blog")]*ad_rates
 
@@ -197,24 +185,37 @@ fr <- function(x) {      email <- x[1]
 tweets <- x[2]
 instagram <- x[3]
 blog<- x[4]
-return(-(reg_adstock$coef["intercept"] + reg_adstock$coef["email"]*(email +exo_values$email)+ reg_adstock$coef["root_tweet"]*(tweets+exo_values$tweets)^(1/2) + reg_adstock$coef["instagram"]*(instagram+exo_values$instagram) +reg_adstock$coef["blog"]*(blog+exo_values$blog)+ reg_adstock$coef["blog_instagram"]*(blog+exo_values$blog)*(instagram+exo_values$instagram)+reg_adstock$coef["tweets_instagram"]*(tweets+exo_values$tweets)*(instagram+exo_values$instagram)))
+return((reg_adstock$coef["intercept"] + reg_adstock$coef["email"]*(email +exo_values$email)+ reg_adstock$coef["root_tweet"]*(tweets+exo_values$tweets)^(1/2) + reg_adstock$coef["instagram"]*(instagram+exo_values$instagram) +reg_adstock$coef["blog"]*(blog+exo_values$blog)+ reg_adstock$coef["blog_instagram"]*(blog+exo_values$blog)*(instagram+exo_values$instagram)+reg_adstock$coef["tweets_instagram"]*(tweets+exo_values$tweets)*(instagram+exo_values$instagram)))
 }
 
+final_result<-NULL
+final_result$value=0
 
-sol1.0<-constrOptim(c(1,1,1,1), fr, NULL, ui=rbind(c(-2,-100,-110,-120),
-                                                   c(1,0,0,0),    
-                                                   c(0,1,0,0),
-                                                   c(0,0,1,0),
-                                                   c(0,0,0,1)),  
-                    ci=c(-5000,0, 0,0,0))
-
-
-forecast_matrix<-exo_values+sol1.0$par
+for (X in 1:100){
+  
+  s1<-runif(1,min=0, max=4999/2)
+  s2<- runif(1,min=0, max=(4999-2*s1)/100)
+  s3<- runif(1,min=0, max=(4999-2*s1-100*s2)/110)
+  s4<- runif(1,min=0, max=(4999-2*s1-100*s2-110*s3)/120)
+  
+  sol1.0<-constrOptim(c(s1,s2,s3,s4), fr, NULL, ui=rbind(c(-2,-100,-110,-120), # Budget constraint.
+                                                         c(1,0,0,0), # Nonnegativity constraint
+                                                         c(0,1,0,0), # Nonnegativity constraint
+                                                         c(0,0,1,0), # Nonnegativity constraint
+                                                         c(0,0,0,1)), # Nonnegativity constraint
+                      ci=c(-5000,0, 0,0,0), control = list(fnscale = -1)) 
+  
+  if (sol1.0$value>final_result$value){
+    final_result<-sol1.0
+    
+  }
+  
+}
+forecast_matrix<-exo_values+final_result$par
 forecast_matrix<-forecast_matrix[, root_tweet:=(tweets)^(1/2)][,blog_instagram:=blog*instagram][, tweets_instagram:=tweets*instagram]
-exo_values<-exo_values[, root_tweet:=(tweets)^(1/2)][,blog_instagram:=blog*instagram][, tweets_instagram:=tweets*instagram]
 
 ## final forecast using optimal values
-forecast(reg_adstock, xreg=exo_values[,c("email", "root_tweet", "instagram", "blog", "blog_instagram", "tweets_instagram")])
+forecast(reg_adstock, xreg=forecast_matrix[,c("email", "root_tweet", "instagram", "blog", "blog_instagram", "tweets_instagram")])
 
 #######################################
 
